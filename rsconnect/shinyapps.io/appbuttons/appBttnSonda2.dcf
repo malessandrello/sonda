@@ -1,0 +1,13 @@
+name: appBttnSonda2
+title: appBttnSonda2
+username: appbuttons
+account: appbuttons
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15880441
+bundleId: 11090614
+url: https://appbuttons.shinyapps.io/appBttnSonda2/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: datos_sonda_654.xlsx
