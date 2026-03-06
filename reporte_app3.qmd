@@ -1,0 +1,477 @@
+---
+title: "app3: Logic and Workflow"
+subtitle: "Technical documentation of the Shiny application"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    highlight-style: github
+execute:
+  eval: false
+  echo: true
+---
+
+## Overview
+
+**app3** is a Shiny application for monitoring the corrected temperature of refrigeration or incubation equipment (*estufas*) using probe data exported from a data logger. The user uploads an Excel or CSV file at runtime and the app processes it interactively.
+
+The application allows the user to:
+
+- Upload a data file (`.xls`, `.xlsx`, or `.csv`) containing temperature records,
+- Filter records by **equipment** (`EquipoD`) and by one or more **dates**,
+- Apply an equipment-specific **correction factor** to the raw temperature readings,
+- Visualise the corrected temperature over time as an interactive step-line chart with tolerance-limit reference lines,
+- Inspect **deviations** above and below the tolerance range in tabular form,
+- Identify the **maximum deviation** in each direction (and the date on which it occurred) through value boxes.
+
+---
+
+## Packages used
+
+```{r}
+library(shiny)            # Core Shiny framework
+library(bslib)            # Modern layout (page_fluid, card, value_box, layout_columns)
+library(dplyr)            # Data wrangling (filter, mutate, select)
+library(readxl)           # Reading .xls/.xlsx files (read_xlsx)
+library(tidyverse)        # Umbrella package (includes ggplot2, tidyr, etc.)
+library(shinyWidgets)     # Enhanced widgets (actionBttn, pickerInput, pickerOptions)
+library(shinycssloaders)  # Loading spinner while plots render (withSpinner)
+library(plotly)           # Interactive charts (ggplotly)
+library(flextable)        # Publication-quality HTML tables (flextable, autofit, htmltools_value)
+library(tools)            # Utility functions
+library(bsicons)          # Bootstrap icons for value boxes (bs_icon)
+```
+
+---
+
+## Data input
+
+Unlike applications that load data at startup from a fixed file, **app3 requires the user to upload a file each session** via the `fileInput` widget (`inputId = "subir"`). The accepted formats are `.xls`, `.xlsx`, and `.csv`.
+
+### Raw columns expected in the file
+
+| Column | Type | Description |
+|---|---|---|
+| `Eq_Date_Id` | Date / datetime | Timestamp of each temperature reading — renamed to `Fecha` |
+| `EquipoD` | Character | Equipment identifier (e.g. `"Estufa 1652"`) |
+| `IdEquipo` | Character | Probe / sensor identifier displayed in the report header |
+| `Temperatura` | Numeric | Raw temperature reading in °C |
+
+### Transformations applied after upload
+
+```{r}
+datos_xls <- eventReactive(input$subir, {
+  datos <- read_xlsx(input$subir$datapath)
+  datos
+})
+
+datos1 <- reactive(
+  datos_xls() %>%
+    mutate(
+      EquipoD = as.factor(EquipoD),
+      across(where(is.numeric), ~ round(., digits = 2))
+    ) %>%
+    rename("Fecha" = "Eq_Date_Id")
+)
+```
+
+`datos1()` is the cleaned data frame used everywhere else in the server. All numeric columns are rounded to two decimal places and `EquipoD` is converted to a factor to make it sortable and usable as a grouping variable.
+
+### Equipment parameters (hard-coded)
+
+Each equipment name maps to a set of calibration and tolerance parameters stored inside a `switch()` statement in `datos_equipos()`:
+
+| Equipment | Correction factor | Lower limit (°C) | Upper limit (°C) |
+|---|---|---|---|
+| Estufa 1652 | +0.24 | 29.29 | 29.82 |
+| Estufa 654 | +0.41 | 41.20 | 41.90 |
+
+These values are used to compute `Temperatura_corregida` and to classify each reading as within or outside the tolerance range.
+
+---
+
+## User Interface (UI)
+
+The UI is built with `bslib::page_fluid()`, which stacks all components vertically on the page.
+
+### General layout
+
+```
+page_fluid
+│
+├── tags$head → custom CSS (green background #73B77B, top padding)
+│
+├── titlePanel("Análisis de Buttons")
+│
+├── fileInput("subir")                  ← Upload trigger
+├── hr()
+│
+├── layout_columns (col_widths = c(6, 6))
+│       ├── selectizeInput("equipos")   ← Equipment selector (dynamic choices)
+│       └── uiOutput("selec_fecha")     ← Date picker (rendered dynamically)
+├── hr()
+│
+├── actionBttn("analisis", "ANALIZAR")  ← Analysis trigger
+├── hr()
+│
+├── card
+│   ├── card_header: htmlOutput("fact_coerr")    ← Summary report header
+│   └── card_body (height = 600)
+│           └── withSpinner(plotlyOutput("grafico"))   ← Step-line chart
+│
+├── layout_columns (col_widths = c(6, 6))
+│       ├── value_box: "Máximo desvío por debajo del rango" → max_desv_inf
+│       └── value_box: "Máximo desvío por encima del rango" → max_desv_sup
+├── hr()
+│
+├── layout_columns
+│       ├── card: "Desvíos por debajo del límite"         → tabla
+│       └── card: "Desvíos por encima del límite"         → tabla2
+│
+└── layout_columns
+        ├── card: "Desvíos por debajo del límite > 1 °C"  → tabla3
+        └── card: "Desvíos por encima del límite > 1 °C"  → tabla4
+```
+
+### Dynamic widgets
+
+Two UI elements are rendered after the data file is uploaded, because their choices depend on the file contents:
+
+| Output | Widget produced | Depends on |
+|---|---|---|
+| `equipos` | `selectizeInput` (updated via `observe`) | `equipos()` — factor levels of `EquipoD` |
+| `selec_fecha` | `pickerInput` (multi-select, with "Select all") | `fechas()` — unique dates in the uploaded file |
+
+### Analysis trigger
+
+All outputs that constitute the actual analysis (chart, header, tables, value boxes) are gated behind `req(input$analisis)`. Nothing renders until the user presses **ANALIZAR**. This prevents partial or misleading output from appearing while the user is still adjusting the equipment or date filters.
+
+---
+
+## Server logic
+
+### Reactive flow diagram
+
+```
+input$subir
+    │
+    └──► datos_xls()  ──► datos1()
+                               │
+                               ├── equipos()  ──► observe ──► updateSelectizeInput("equipos")
+                               └── fechas()   ──► output$selec_fecha (renderUI → pickerInput)
+
+input$equipos
+    │
+    └──► datos_equipos()   ← equipment parameters (factor_correc, lim_inf, lim_sup)
+
+input$equipos + input$fechas + datos_equipos()
+    │
+    └──► subsetted()        ← filtered + corrected data
+               │
+               ├── max()              ← maximum corrected temperature
+               ├── min()              ← minimum corrected temperature
+               ├── promedio()         ← mean corrected temperature
+               ├── inicio()           ← first timestamp in selection
+               ├── fin()              ← last timestamp in selection
+               │
+               ├── desv_inf()         ← rows below lim_inf
+               │       ├── desv_inf1()   ← rows with deviation < −1 °C
+               │       ├── fecha_max_desv_inf()
+               │       └── max_desv_inf()
+               │
+               └── desv_sup()         ← rows above lim_sup
+                       ├── desv_sup1()   ← rows with deviation > +1 °C
+                       ├── fecha_max_desv_sup()
+                       └── max_desv_sup()
+
+input$analisis (req'd by all outputs below)
+    │
+    ├──► output$grafico        (plotly, step-line chart)
+    ├──► output$fact_coerr     (HTML summary header)
+    ├──► output$tabla          (flextable — desv_inf)
+    ├──► output$tabla2         (flextable — desv_sup)
+    ├──► output$tabla3         (flextable — desv_inf1)
+    ├──► output$tabla4         (flextable — desv_sup1)
+    ├──► output$max_desv_inf   (value box content)
+    └──► output$max_desv_sup   (value box content)
+```
+
+### Equipment selector update
+
+Once data is uploaded, the unique levels of `EquipoD` are pushed into the `selectizeInput` via `observe`:
+
+```{r}
+equipos <- reactive(levels(datos1()$EquipoD))
+
+observe({
+  updateSelectizeInput(session,
+                       inputId  = "equipos",
+                       label    = "Equipos",
+                       choices  = equipos(),
+                       selected = NULL,
+                       server   = TRUE)
+})
+```
+
+### Dynamic date picker
+
+The date picker is rendered server-side so it can reflect the actual dates present in the uploaded file:
+
+```{r}
+fechas <- reactive(as.Date(datos1()$Fecha))
+
+output$selec_fecha <- renderUI({
+  pickerInput(
+    inputId  = "fechas",
+    label    = HTML("<b style='font-family: Raleway, Sans-serif;'>Seleccione las fechas</b>"),
+    choices  = sort(unique(fechas())),
+    options  = pickerOptions(actionsBox = TRUE, dropupAuto = FALSE),
+    selected = unique(fechas()),   # all dates pre-selected
+    multiple = TRUE
+  )
+})
+```
+
+All dates are pre-selected by default so the user immediately sees the full dataset and can deselect specific dates to narrow the analysis.
+
+---
+
+## Derived reactive datasets
+
+### `datos_equipos()` — calibration parameters
+
+```{r}
+datos_equipos <- reactive({
+  req(input$equipos)
+  switch(input$equipos,
+         "Estufa 1652" = tibble(factor_correc = 0.24, lim_sup = 29.82, lim_inf = 29.29),
+         "Estufa 654"  = tibble(factor_correc = 0.41, lim_sup = 41.90, lim_inf = 41.20))
+})
+```
+
+This reactive is a lookup table: it maps the selected equipment name to a one-row tibble containing the correction factor and tolerance limits. It is consumed by `subsetted()`, the chart, and the summary header.
+
+### `subsetted()` — filtered and corrected data
+
+The central reactive. Filters `datos1()` to the selected equipment and dates, removes zero-temperature records (sensor artefacts), and adds the corrected temperature column:
+
+```{r}
+subsetted <- reactive(
+  datos1() %>%
+    filter(
+      EquipoD == equip() &
+      Temperatura > 0 &
+      as.Date(Fecha) %in% input$fechas
+    ) %>%
+    mutate(Temperatura_corregida = Temperatura + datos_equipos()$factor_correc)
+)
+```
+
+`Temperatura > 0` guards against logger artefacts (readings of 0 °C that indicate a sensor fault, not a real measurement).
+
+### Deviation datasets
+
+Four reactives derive deviation sub-tables from `subsetted()`:
+
+| Reactive | Filter condition | Deviation column |
+|---|---|---|
+| `desv_inf()` | `Temperatura_corregida < lim_inf` | `Desvío = Temperatura_corregida − lim_inf` (negative) |
+| `desv_sup()` | `Temperatura_corregida > lim_sup` | `Desvío = Temperatura_corregida − lim_sup` (positive) |
+| `desv_inf1()` | `desv_inf() %>% filter(Desvío < -1)` | Same — only rows where deviation exceeds 1 °C |
+| `desv_sup1()` | `desv_sup() %>% filter(Desvío > 1)` | Same — only rows where deviation exceeds 1 °C |
+
+```{r}
+desv_inf <- reactive(
+  subsetted() %>%
+    filter(Temperatura_corregida < datos_equipos()$lim_inf) %>%
+    mutate(Desvío = Temperatura_corregida - datos_equipos()$lim_inf) %>%
+    select(EquipoD, Fecha, Temperatura_corregida, Desvío)
+)
+
+desv_sup <- reactive(
+  subsetted() %>%
+    filter(Temperatura_corregida > datos_equipos()$lim_sup) %>%
+    mutate(Desvío = Temperatura_corregida - datos_equipos()$lim_sup) %>%
+    select(EquipoD, Fecha, Temperatura_corregida, Desvío)
+)
+
+desv_inf1 <- reactive(desv_inf() %>% filter(Desvío < -1))
+desv_sup1 <- reactive(desv_sup() %>% filter(Desvío > 1))
+```
+
+### Maximum-deviation reactives
+
+```{r}
+max_desv_sup <- reactive({
+  req(desv_sup())
+  round(base::max(desv_sup()$Desvío), 2)
+})
+
+fecha_max_desv_sup <- reactive({
+  req(desv_sup())
+  desv_sup()$Fecha[which.max(desv_sup()$Desvío)]
+})
+
+max_desv_inf <- reactive({
+  req(desv_inf())
+  round(base::min(desv_inf()$Desvío), 2)   # most negative value
+})
+
+fecha_max_desv_inf <- reactive({
+  req(desv_inf())
+  desv_inf()$Fecha[which.min(desv_inf()$Desvío)]
+})
+```
+
+`base::max()` and `base::min()` are called explicitly to avoid conflicts with `dplyr`'s masked versions of these functions.
+
+---
+
+## Visualizations
+
+### Interactive step-line chart (`output$grafico`)
+
+```{r}
+output$grafico <- renderPlotly({
+  req(input$analisis)
+  p <- subsetted() %>%
+    ggplot(aes(.data[["Fecha"]], .data[["Temperatura_corregida"]])) +
+    geom_step(color = "#2E6F40") +
+    geom_hline(yintercept = datos_equipos()$lim_sup) +
+    geom_hline(yintercept = datos_equipos()$lim_inf) +
+    xlab("Fecha") +
+    ylab("Temperatura (°C)")
+  ggplotly(p, height = 500, dynamicTicks = TRUE)
+})
+```
+
+`geom_step()` is used instead of `geom_line()` because temperature logger data is recorded at fixed intervals and the value is constant between readings — a step function accurately represents this physical reality. The two `geom_hline()` calls draw the lower and upper tolerance limits so deviations are immediately visible.
+
+### Summary header (`output$fact_coerr`)
+
+Rendered as raw HTML, this block acts as a structured report header that summarises the key facts about the current analysis:
+
+```{r}
+output$fact_coerr <- renderUI({
+  req(input$analisis)
+  HTML(paste0(
+    "<b>EQUIPO: </b>",              unique(input$equipos), "</br>",
+    "<b>SONDA: </b>",               unique(subsetted()$IdEquipo), "</br>",
+    "<b>FACTOR DE CORRECCIÓN: </b>",unique(datos_equipos()$factor_correc), "</br>",
+    "<b>TEMPERATURA DE TRABAJO: </b>",
+      unique(datos_equipos()$lim_inf), " °C  -  ",
+      unique(datos_equipos()$lim_sup), " °C", "</br>",
+    "<b>INICIO DE REGISTRO: </b>",  unique(inicio()), "</br>",
+    "<b>FIN DE REGISTRO: </b>",     unique(fin()),    "</br>",
+    "<b>TEMPERATURA MÁXIMA: </b>",  unique(max()),    " °C", "</br>",
+    "<b>TEMPERATURA MÍNIMA: </b>",  unique(min()),    " °C", "</br>",
+    "<b>TEMPERATURA PROMEDIO: </b>",unique(promedio())," °C"
+  ))
+})
+```
+
+### Deviation tables (`output$tabla` – `output$tabla4`)
+
+All four deviation tables follow the same pattern: pass the relevant reactive data frame to `flextable()`, apply `autofit()`, and convert to HTML with `htmltools_value()`:
+
+```{r}
+output$tabla <- renderUI({
+  req(input$analisis)
+  desv_inf() %>% flextable() %>% autofit() %>% htmltools_value()
+})
+```
+
+`flextable` is chosen over `DT` or `knitr::kable()` because it produces ready-to-print tables that can be directly pasted into Word or PDF reports, which is consistent with the lab-documentation context of this application.
+
+### Value boxes (`output$max_desv_inf`, `output$max_desv_sup`)
+
+The two value boxes display the single worst deviation in each direction together with the date on which it occurred:
+
+```{r}
+output$max_desv_inf <- renderUI({
+  req(input$analisis)
+  HTML(paste0(max_desv_inf(), " °C - ", fecha_max_desv_inf()))
+})
+
+output$max_desv_sup <- renderUI({
+  req(input$analisis)
+  HTML(paste0(max_desv_sup(), " °C - ", fecha_max_desv_sup()))
+})
+```
+
+Because these outputs sit inside a layout that is always visible (not inside a `conditionalPanel`), they are kept alive explicitly so that Shiny does not suspend them when the section scrolls out of view:
+
+```{r}
+outputOptions(output, "max_desv_inf", suspendWhenHidden = FALSE)
+outputOptions(output, "max_desv_sup", suspendWhenHidden = FALSE)
+```
+
+---
+
+## Complete workflow summary
+
+```
+App launches
+    │
+    ▼
+User uploads file (input$subir)
+    │
+    └──► datos_xls() / datos1() built
+               │
+               ├── equipos() ──► "equipos" selector populated
+               └── fechas()  ──► "selec_fecha" picker rendered (all dates pre-selected)
+
+User selects equipment (input$equipos)
+    │
+    └──► datos_equipos() recomputes (correction factor + limits for selected unit)
+
+User adjusts date selection (input$fechas) — optional, all pre-selected
+    │
+    ▼
+User presses ANALIZAR (input$analisis)
+    │
+    ▼
+subsetted() filters and corrects temperatures
+    │
+    ├── Scalar summaries: max(), min(), promedio(), inicio(), fin()
+    │
+    ├── Deviation sub-tables:
+    │       desv_inf()  ──► desv_inf1()
+    │       desv_sup()  ──► desv_sup1()
+    │
+    ├──► output$grafico         step-line chart with tolerance lines
+    ├──► output$fact_coerr      HTML summary header
+    │
+    ├──► output$tabla           below-range deviations
+    ├──► output$tabla2          above-range deviations
+    ├──► output$tabla3          below-range deviations > 1 °C
+    ├──► output$tabla4          above-range deviations > 1 °C
+    │
+    ├──► output$max_desv_inf    worst negative deviation + date
+    └──► output$max_desv_sup    worst positive deviation + date
+```
+
+---
+
+## Design observations
+
+### Strengths
+
+- **`eventReactive` for file upload.** Using `eventReactive(input$subir, ...)` ensures the data is read exactly once per upload event and cached reactively, avoiding redundant file I/O on every downstream recalculation.
+- **`req(input$analisis)` gate.** Requiring the button press before rendering any output prevents the user from seeing incomplete results while still adjusting filters, and makes the analysis feel intentional.
+- **`Temperatura > 0` guard.** Filtering out zero-temperature records defensively handles a common data-logger artefact without requiring any user action.
+- **`geom_step()` for logger data.** Accurately represents the piecewise-constant nature of fixed-interval temperature records.
+- **`base::max()` / `base::min()` qualification.** Explicitly namespacing these calls avoids silent errors caused by `dplyr` masking the base R generics.
+- **`suspendWhenHidden = FALSE` on value boxes.** Ensures the deviation outputs remain computed even when out of view, which is also necessary if their values were ever used to drive a `conditionalPanel`.
+
+### Opportunities for refactoring (for future reference)
+
+- **Hard-coded equipment parameters.** The `switch()` block in `datos_equipos()` must be manually edited each time a new piece of equipment is added. Storing these parameters in a separate lookup table (a small Excel sheet or a named list in a `config.R` file) and joining them at runtime would make the application data-driven and easier to maintain.
+- **Repeated `renderUI` / `flextable` pattern.** The four deviation-table outputs are structurally identical. A helper function parametrised by the reactive data frame would eliminate the repetition.
+- **Single-equipment selector.** `selectizeInput` allows only one equipment to be selected at a time (no `multiple = TRUE`). If comparisons across units are ever needed, switching to a `pickerInput` with multi-select would require minimal changes to the downstream reactives.
+- **No input validation for missing columns.** If the uploaded file does not contain the expected columns (`Eq_Date_Id`, `EquipoD`, `Temperatura`, `IdEquipo`), the app will crash with an uninformative error. Adding a `validate()` / `need()` check in `datos1()` would produce a user-friendly message instead.
