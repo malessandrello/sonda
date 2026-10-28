@@ -1,0 +1,13 @@
+name: sonda
+title: sonda
+username: appste
+account: appste
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18304654
+bundleId: 12751185
+url: https://appste.shinyapps.io/sonda/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .gitattributes|capturas_viejas/fig3_old.png|generar_datos_ejemplo.R|README.md|reporte_app3.html|reporte_app3.qmd|reporte_app3_files

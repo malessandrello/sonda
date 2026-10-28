@@ -6,7 +6,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="dcterms.date" content="2026-02-23">
+<meta name="dcterms.date" content="2026-10-28">
 
 <title>app3: Logic and Workflow</title>
 <style>
@@ -85,7 +85,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#data-input" id="toc-data-input" class="nav-link" data-scroll-target="#data-input">Data input</a>
   <ul class="collapse">
   <li><a href="#raw-columns-expected-in-the-file" id="toc-raw-columns-expected-in-the-file" class="nav-link" data-scroll-target="#raw-columns-expected-in-the-file">Raw columns expected in the file</a></li>
-  <li><a href="#transformations-applied-after-upload" id="toc-transformations-applied-after-upload" class="nav-link" data-scroll-target="#transformations-applied-after-upload">Transformations applied after upload</a></li>
+  <li><a href="#loading-and-transformations" id="toc-loading-and-transformations" class="nav-link" data-scroll-target="#loading-and-transformations">Loading and transformations</a></li>
   <li><a href="#equipment-parameters-hard-coded" id="toc-equipment-parameters-hard-coded" class="nav-link" data-scroll-target="#equipment-parameters-hard-coded">Equipment parameters (hard-coded)</a></li>
   </ul></li>
   <li><a href="#user-interface-ui" id="toc-user-interface-ui" class="nav-link" data-scroll-target="#user-interface-ui">User Interface (UI)</a>
@@ -139,7 +139,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">February 23, 2026</p>
+      <p class="date">October 28, 2026</p>
     </div>
   </div>
   
@@ -153,7 +153,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <section id="overview" class="level2">
 <h2 class="anchored" data-anchor-id="overview">Overview</h2>
-<p><strong>app3</strong> is a Shiny application for monitoring the corrected temperature of refrigeration or incubation equipment (<em>estufas</em>) using probe data exported from a data logger. The user uploads an Excel or CSV file at runtime and the app processes it interactively.</p>
+<p><strong>app3</strong> is a Shiny application for monitoring the corrected temperature of refrigeration or incubation equipment (<em>estufas</em>) using probe data exported from a data logger. The app opens with a synthetic example file already loaded, and the user can upload their own Excel file at any time.</p>
 <p>The application allows the user to:</p>
 <ul>
 <li>Upload a data file (<code>.xls</code>, <code>.xlsx</code>, or <code>.csv</code>) containing temperature records,</li>
@@ -187,7 +187,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="data-input" class="level2">
 <h2 class="anchored" data-anchor-id="data-input">Data input</h2>
-<p>Unlike applications that load data at startup from a fixed file, <strong>app3 requires the user to upload a file each session</strong> via the <code>fileInput</code> widget (<code>inputId = "subir"</code>). The accepted formats are <code>.xls</code>, <code>.xlsx</code>, and <code>.csv</code>.</p>
+<p>When the app starts it reads <strong><code>datos_ejemplo.xlsx</code></strong>, a file with synthetic readings for two stoves (three weeks, one reading every 10 minutes). The user can replace it by uploading a file through the <code>fileInput</code> widget (<code>inputId = "subir"</code>). The example file is created by <code>generar_datos_ejemplo.R</code>.</p>
+<p>All equipment names, probe IDs, working ranges, correction factors and readings shown by default are <strong>synthetic</strong>.</p>
 <section id="raw-columns-expected-in-the-file" class="level3">
 <h3 class="anchored" data-anchor-id="raw-columns-expected-in-the-file">Raw columns expected in the file</h3>
 <table class="caption-top table">
@@ -212,7 +213,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <tr class="even">
 <td><code>EquipoD</code></td>
 <td>Character</td>
-<td>Equipment identifier (e.g.&nbsp;<code>"Estufa 1652"</code>)</td>
+<td>Equipment identifier (e.g.&nbsp;<code>"Estufa 3817"</code>)</td>
 </tr>
 <tr class="odd">
 <td><code>IdEquipo</code></td>
@@ -227,14 +228,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </tbody>
 </table>
 </section>
-<section id="transformations-applied-after-upload" class="level3">
-<h3 class="anchored" data-anchor-id="transformations-applied-after-upload">Transformations applied after upload</h3>
+<section id="loading-and-transformations" class="level3">
+<h3 class="anchored" data-anchor-id="loading-and-transformations">Loading and transformations</h3>
 <div class="cell">
 <details class="code-fold">
 <summary>Show code</summary>
-<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>datos_xls <span class="ot">&lt;-</span> <span class="fu">eventReactive</span>(input<span class="sc">$</span>subir, {</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  datos <span class="ot">&lt;-</span> <span class="fu">read_xlsx</span>(input<span class="sc">$</span>subir<span class="sc">$</span>datapath)</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  datos</span>
+<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The example file is used until the user uploads one</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>datos_xls <span class="ot">&lt;-</span> <span class="fu">reactive</span>({</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">is.null</span>(input<span class="sc">$</span>subir)) <span class="fu">read_xlsx</span>(<span class="st">"datos_ejemplo.xlsx"</span>) <span class="cf">else</span> <span class="fu">read_xlsx</span>(input<span class="sc">$</span>subir<span class="sc">$</span>datapath)</span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>})</span>
 <span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>datos1 <span class="ot">&lt;-</span> <span class="fu">reactive</span>(</span>
@@ -263,16 +264,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </thead>
 <tbody>
 <tr class="odd">
-<td>Estufa 1652</td>
-<td>+0.24</td>
-<td>29.29</td>
-<td>29.82</td>
+<td>Estufa 3817</td>
+<td>+0.32</td>
+<td>34.65</td>
+<td>35.40</td>
 </tr>
 <tr class="even">
-<td>Estufa 654</td>
-<td>+0.41</td>
-<td>41.20</td>
-<td>41.90</td>
+<td>Estufa 2290</td>
+<td>−0.18</td>
+<td>43.80</td>
+<td>44.70</td>
 </tr>
 </tbody>
 </table>
@@ -360,7 +361,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h2 class="anchored" data-anchor-id="server-logic">Server logic</h2>
 <section id="reactive-flow-diagram" class="level3">
 <h3 class="anchored" data-anchor-id="reactive-flow-diagram">Reactive flow diagram</h3>
-<pre><code>input$subir
+<pre><code>datos_ejemplo.xlsx (at startup) or input$subir (after an upload)
     │
     └──► datos_xls()  ──► datos1()
                                │
@@ -455,8 +456,8 @@ input$analisis (req'd by all outputs below)
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>datos_equipos <span class="ot">&lt;-</span> <span class="fu">reactive</span>({</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">req</span>(input<span class="sc">$</span>equipos)</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">switch</span>(input<span class="sc">$</span>equipos,</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>         <span class="st">"Estufa 1652"</span> <span class="ot">=</span> <span class="fu">tibble</span>(<span class="at">factor_correc =</span> <span class="fl">0.24</span>, <span class="at">lim_sup =</span> <span class="fl">29.82</span>, <span class="at">lim_inf =</span> <span class="fl">29.29</span>),</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">"Estufa 654"</span>  <span class="ot">=</span> <span class="fu">tibble</span>(<span class="at">factor_correc =</span> <span class="fl">0.41</span>, <span class="at">lim_sup =</span> <span class="fl">41.90</span>, <span class="at">lim_inf =</span> <span class="fl">41.20</span>))</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>         <span class="st">"Estufa 3817"</span> <span class="ot">=</span> <span class="fu">tibble</span>(<span class="at">factor_correc =</span> <span class="fl">0.32</span>,  <span class="at">lim_sup =</span> <span class="fl">35.40</span>, <span class="at">lim_inf =</span> <span class="fl">34.65</span>),</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">"Estufa 2290"</span> <span class="ot">=</span> <span class="fu">tibble</span>(<span class="at">factor_correc =</span> <span class="sc">-</span><span class="fl">0.18</span>, <span class="at">lim_sup =</span> <span class="fl">44.70</span>, <span class="at">lim_inf =</span> <span class="fl">43.80</span>))</span>
 <span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>})</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
@@ -666,7 +667,7 @@ input$analisis (req'd by all outputs below)
 <pre><code>App launches
     │
     ▼
-User uploads file (input$subir)
+Example file loaded (or user uploads a file: input$subir)
     │
     └──► datos_xls() / datos1() built
                │
@@ -708,7 +709,7 @@ subsetted() filters and corrects temperatures
 <section id="strengths" class="level3">
 <h3 class="anchored" data-anchor-id="strengths">Strengths</h3>
 <ul>
-<li><strong><code>eventReactive</code> for file upload.</strong> Using <code>eventReactive(input$subir, ...)</code> ensures the data is read exactly once per upload event and cached reactively, avoiding redundant file I/O on every downstream recalculation.</li>
+<li><strong>Ready to use on first load.</strong> Reading a bundled example file until the user uploads one means the app shows results immediately, while <code>reactive()</code> still caches the data so it is read only once per file.</li>
 <li><strong><code>req(input$analisis)</code> gate.</strong> Requiring the button press before rendering any output prevents the user from seeing incomplete results while still adjusting filters, and makes the analysis feel intentional.</li>
 <li><strong><code>Temperatura &gt; 0</code> guard.</strong> Filtering out zero-temperature records defensively handles a common data-logger artefact without requiring any user action.</li>
 <li><strong><code>geom_step()</code> for logger data.</strong> Accurately represents the piecewise-constant nature of fixed-interval temperature records.</li>

@@ -18,7 +18,7 @@ execute:
 
 ## Overview
 
-**app3** is a Shiny application for monitoring the corrected temperature of refrigeration or incubation equipment (*estufas*) using probe data exported from a data logger. The user uploads an Excel or CSV file at runtime and the app processes it interactively.
+**app3** is a Shiny application for monitoring the corrected temperature of refrigeration or incubation equipment (*estufas*) using probe data exported from a data logger. The app opens with a synthetic example file already loaded, and the user can upload their own Excel file at any time.
 
 The application allows the user to:
 
@@ -51,23 +51,25 @@ library(bsicons)          # Bootstrap icons for value boxes (bs_icon)
 
 ## Data input
 
-Unlike applications that load data at startup from a fixed file, **app3 requires the user to upload a file each session** via the `fileInput` widget (`inputId = "subir"`). The accepted formats are `.xls`, `.xlsx`, and `.csv`.
+When the app starts it reads **`datos_ejemplo.xlsx`**, a file with synthetic readings for two stoves (three weeks, one reading every 10 minutes). The user can replace it by uploading a file through the `fileInput` widget (`inputId = "subir"`). The example file is created by `generar_datos_ejemplo.R`.
+
+All equipment names, probe IDs, working ranges, correction factors and readings shown by default are **synthetic**.
 
 ### Raw columns expected in the file
 
 | Column | Type | Description |
 |---|---|---|
 | `Eq_Date_Id` | Date / datetime | Timestamp of each temperature reading — renamed to `Fecha` |
-| `EquipoD` | Character | Equipment identifier (e.g. `"Estufa 1652"`) |
+| `EquipoD` | Character | Equipment identifier (e.g. `"Estufa 3817"`) |
 | `IdEquipo` | Character | Probe / sensor identifier displayed in the report header |
 | `Temperatura` | Numeric | Raw temperature reading in °C |
 
-### Transformations applied after upload
+### Loading and transformations
 
 ```{r}
-datos_xls <- eventReactive(input$subir, {
-  datos <- read_xlsx(input$subir$datapath)
-  datos
+# The example file is used until the user uploads one
+datos_xls <- reactive({
+  if (is.null(input$subir)) read_xlsx("datos_ejemplo.xlsx") else read_xlsx(input$subir$datapath)
 })
 
 datos1 <- reactive(
@@ -88,8 +90,8 @@ Each equipment name maps to a set of calibration and tolerance parameters stored
 
 | Equipment | Correction factor | Lower limit (°C) | Upper limit (°C) |
 |---|---|---|---|
-| Estufa 1652 | +0.24 | 29.29 | 29.82 |
-| Estufa 654 | +0.41 | 41.20 | 41.90 |
+| Estufa 3817 | +0.32 | 34.65 | 35.40 |
+| Estufa 2290 | −0.18 | 43.80 | 44.70 |
 
 These values are used to compute `Temperatura_corregida` and to classify each reading as within or outside the tolerance range.
 
@@ -158,7 +160,7 @@ All outputs that constitute the actual analysis (chart, header, tables, value bo
 ### Reactive flow diagram
 
 ```
-input$subir
+datos_ejemplo.xlsx (at startup) or input$subir (after an upload)
     │
     └──► datos_xls()  ──► datos1()
                                │
@@ -249,8 +251,8 @@ All dates are pre-selected by default so the user immediately sees the full data
 datos_equipos <- reactive({
   req(input$equipos)
   switch(input$equipos,
-         "Estufa 1652" = tibble(factor_correc = 0.24, lim_sup = 29.82, lim_inf = 29.29),
-         "Estufa 654"  = tibble(factor_correc = 0.41, lim_sup = 41.90, lim_inf = 41.20))
+         "Estufa 3817" = tibble(factor_correc = 0.32,  lim_sup = 35.40, lim_inf = 34.65),
+         "Estufa 2290" = tibble(factor_correc = -0.18, lim_sup = 44.70, lim_inf = 43.80))
 })
 ```
 
@@ -419,7 +421,7 @@ outputOptions(output, "max_desv_sup", suspendWhenHidden = FALSE)
 App launches
     │
     ▼
-User uploads file (input$subir)
+Example file loaded (or user uploads a file: input$subir)
     │
     └──► datos_xls() / datos1() built
                │
@@ -462,7 +464,7 @@ subsetted() filters and corrects temperatures
 
 ### Strengths
 
-- **`eventReactive` for file upload.** Using `eventReactive(input$subir, ...)` ensures the data is read exactly once per upload event and cached reactively, avoiding redundant file I/O on every downstream recalculation.
+- **Ready to use on first load.** Reading a bundled example file until the user uploads one means the app shows results immediately, while `reactive()` still caches the data so it is read only once per file.
 - **`req(input$analisis)` gate.** Requiring the button press before rendering any output prevents the user from seeing incomplete results while still adjusting filters, and makes the analysis feel intentional.
 - **`Temperatura > 0` guard.** Filtering out zero-temperature records defensively handles a common data-logger artefact without requiring any user action.
 - **`geom_step()` for logger data.** Accurately represents the piecewise-constant nature of fixed-interval temperature records.

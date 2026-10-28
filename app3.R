@@ -76,9 +76,9 @@ actionBttn(inputId = "analisis", label = "ANALIZAR"),
 
 server <- function(input, output, session) {
   
-datos_xls <- eventReactive(input$subir, {
-  datos <- read_xlsx(input$subir$datapath)
-  datos
+# Al abrir la app se cargan los datos de ejemplo (inventados); si se sube un archivo, se usa ese
+datos_xls <- reactive({
+  if (is.null(input$subir)) read_xlsx("datos_ejemplo.xlsx") else read_xlsx(input$subir$datapath)
 })
 
 
@@ -118,15 +118,15 @@ datos_xls <- eventReactive(input$subir, {
   datos_equipos <-reactive({
     req(input$equipos)
     switch(input$equipos,
-           "Estufa 1652" = tibble(
-             factor_correc = 0.24,
-             lim_sup = 29.82,
-             lim_inf = 29.29
+           "Estufa 3817" = tibble(
+             factor_correc = 0.32,
+             lim_sup = 35.40,
+             lim_inf = 34.65
            ),
-           "Estufa 654" = tibble(
-             factor_correc = 0.41,
-             lim_sup = 41.90,
-             lim_inf = 41.20
+           "Estufa 2290" = tibble(
+             factor_correc = -0.18,
+             lim_sup = 44.70,
+             lim_inf = 43.80
            ))
   })
   
@@ -217,7 +217,8 @@ datos_xls <- eventReactive(input$subir, {
   
   output$fact_coerr <- renderUI({
     req(input$analisis)
-    HTML(paste0(
+    # El div evita que el encabezado de la tarjeta (flex) ponga cada dato en columna
+    HTML(paste0("<div>",
     "<b>EQUIPO: </b>", unique(input$equipos), "</br>",
     "<b>SONDA: </b>", unique(subsetted()$IdEquipo), "</br>",
     "<b>FACTOR DE CORRECCIÓN: </b>", unique(datos_equipos()$factor_correc), "</br>",
@@ -227,7 +228,8 @@ datos_xls <- eventReactive(input$subir, {
     "<b>FIN DE REGISTRO: </b>", unique(fin()), "</br>",
     "<b>TEMPERATURA MÁXIMA: </b>", unique(max()), " °C", "</br>",
     "<b>TEMPERATURA MÍNIMA: </b>", unique(min()), " °C", "</br>",
-    "<b>TEMPERATURA PROMEDIO: </b>", unique(promedio()), " °C"
+    "<b>TEMPERATURA PROMEDIO: </b>", unique(promedio()), " °C",
+    "</div>"
   ))})
   
   output$tabla <- renderUI({
